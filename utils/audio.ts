@@ -1,77 +1,56 @@
-// utils/audio.ts
-type AudioMap = { [key: string]: HTMLAudioElement };
+// 軽量オーディオ管理。
+// 下の AUDIO_SOURCES に実ファイルURLを設定すれば鳴ります。設定が無いキーは play() しても無音で安全にスルーします。
+const AUDIO_SOURCES: Record<string, string> = {
+  // 例:
+  // title: '/sounds/title_bgm.mp3',
+  // bgm: '/sounds/game_bgm.mp3',
+  // banana: '/sounds/get_item.wav',
+  // hit: '/sounds/hit.wav',
+};
+
+type Playing = { el: HTMLAudioElement; loop: boolean; };
 
 class AudioManager {
-  private contextUnlocked = false;
-  private audios: AudioMap = {};
-  private playing: Set<string> = new Set();
+  private playing: Map<string, Playing> = new Map();
+  private unlocked = false;
 
-  register(key: string, src: string, loop = false) {
-    const audio = new Audio(src);
-    audio.loop = loop;
-    audio.preload = 'auto';
-    this.audios[key] = audio;
+  private ensureUnlocked() {
+    if (this.unlocked) return;
+    const tryUnlock = () => {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+      } catch {}
+      this.unlocked = true;
+      window.removeEventListener('pointerdown', tryUnlock);
+      window.removeEventListener('touchstart', tryUnlock);
+      window.removeEventListener('click', tryUnlock);
+    };
+    window.addEventListener('pointerdown', tryUnlock, { once: true });
+    window.addEventListener('touchstart', tryUnlock, { once: true });
+    window.addEventListener('click', tryUnlock, { once: true });
   }
 
-  async resumeContext(): Promise<void> {
-    if (this.contextUnlocked) return;
-    try {
-      const a = new Audio();
-      a.muted = true;
-      a.src = 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA'; // 無音
-      await a.play().catch(() => {});
-      this.contextUnlocked = true;
-    } catch {}
+  play(name: string, loop = false) {
+    this.ensureUnlocked();
+    const src = AUDIO_SOURCES[name];
+    if (!src) return; // 未設定なら無音
+
+    this.stop(name);
+    const el = new Audio(src);
+    el.loop = loop;
+    el.preload = 'auto';
+    el.crossOrigin = 'anonymous';
+    el.play().catch(() => {});
+    this.playing.set(name, { el, loop });
   }
 
-  isPlaying(key: string) {
-    return this.playing.has(key);
-  }
-
-  play(key: string, loop = false) {
-    const a = this.audios[key];
-    if (!a) return;
-    a.loop = loop;
-
-    // ループBGMは多重再生しない
-    if (loop && this.playing.has(key)) return;
-
-    try { a.currentTime = 0; } catch {}
-    a.play().then(() => {
-      this.playing.add(key);
-      a.onended = () => {
-        this.playing.delete(key);
-      };
-    }).catch(() => {});
-  }
-
-  /** 他の音を全停止してから key を再生（BGM切替などに） */
-  playExclusive(key: string, loop = false) {
-    this.stopAll();
-    this.play(key, loop);
-  }
-
-  stop(key: string) {
-    const a = this.audios[key];
-    if (!a) return;
-    a.pause();
-    try { a.currentTime = 0; } catch {}
-    this.playing.delete(key);
-  }
-
-  stopAll() {
-    Object.keys(this.audios).forEach(k => this.stop(k));
-    this.playing.clear();
+  stop(name: string) {
+    const p = this.playing.get(name);
+    if (!p) return;
+    try { p.el.pause(); p.el.currentTime = 0; } catch {}
+    this.playing.delete(name);
   }
 }
 
 export const audioManager = new AudioManager();
-
-audioManager.register('title', 'title.wav', true);
-audioManager.register('soda', 'soda.wav');
-audioManager.register('ohno', 'ohno.wav');
-audioManager.register('gamestart', 'gamestart.wav');
-audioManager.register('item', 'item.wav');
-audioManager.register('out', 'out.wav');
-audioManager.register('gameover', 'gameover.wav');
-audioManager.register('bgm', 'BGM_HURRY.mp3', true);

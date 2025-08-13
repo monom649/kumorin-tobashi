@@ -1,84 +1,52 @@
-// hooks/useGyroscope.ts
-import { useEffect, useRef, useState } from 'react';
+import { useState, useEffect } from 'react';
 
-type Gyro = { alpha: number | null; beta: number | null; gamma: number | null };
-
-// モジュールスコープ（重複購読を避ける）
-let listenerAdded = false;
-let lastData: Gyro = { alpha: null, beta: null, gamma: null };
-let lastGranted = false;
-let lastError: string | null = null;
-
-const handleOrientation = (event: DeviceOrientationEvent) => {
-  lastData = {
-    alpha: event.alpha ?? null,
-    beta: event.beta ?? null,
-    gamma: event.gamma ?? null,
-  };
-};
-
-const addListeners = () => {
-  if (listenerAdded) return;
-  window.addEventListener('deviceorientation', handleOrientation, true);
-  // iOS16+ で absolute 側にのみ来る端末をフォロー
-  window.addEventListener('deviceorientationabsolute' as any, handleOrientation as any, true);
-  listenerAdded = true;
-};
-
-export async function requestGyroPermission(): Promise<boolean> {
-  try {
-    const anyDO = (DeviceOrientationEvent as unknown) as {
-      requestPermission?: () => Promise<'granted' | 'denied'>;
-    };
-    if (typeof anyDO?.requestPermission === 'function') {
-      const resp = await anyDO.requestPermission();
-      if (resp !== 'granted') {
-        lastGranted = false;
-        lastError = 'ジャイロセンサーの許可が必要です。';
-        return false;
-      }
-    } else {
-      if (!('DeviceOrientationEvent' in window)) {
-        lastGranted = false;
-        lastError = 'この端末はジャイロセンサーに対応していません。';
-        return false;
-      }
-    }
-    addListeners();
-    lastGranted = true;
-    lastError = null;
-    return true;
-  } catch (e) {
-    console.error('Gyro permission error:', e);
-    lastGranted = false;
-    lastError = 'ジャイロセンサーの初期化に失敗しました。';
-    return false;
-  }
+interface GyroscopeData {
+  alpha: number | null;
+  beta: number | null;
+  gamma: number | null;
 }
 
 export const useGyroscope = () => {
-  const [data, setData] = useState<Gyro>(lastData);
-  const [granted, setGranted] = useState<boolean>(lastGranted);
-  const [error, setError] = useState<string | null>(lastError);
-  const rafRef = useRef<number | null>(null);
+  const [gyroData, setGyroData] = useState<GyroscopeData>({ alpha: null, beta: null, gamma: null });
+  const [error, setError] = useState<string | null>(null);
+  const [permissionGranted, setPermissionGranted] = useState(false);
 
   useEffect(() => {
-    const tick = () => {
-      // 差分のみ更新（再レンダー抑制）
-      setData(prev =>
-        prev.alpha === lastData.alpha && prev.beta === lastData.beta && prev.gamma === lastData.gamma
-          ? prev : lastData
-      );
-      setGranted(g => (g === lastGranted ? g : lastGranted));
-      setError(e => (e === lastError ? e : lastError));
-      rafRef.current = requestAnimationFrame(tick);
+    const handleOrientation = (event: DeviceOrientationEvent) => {
+      setGyroData({
+        alpha: event.alpha ?? null,
+        beta: event.beta ?? null,
+        gamma: event.gamma ?? null,
+      });
     };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
+
+    const requestPermission = async () => {
+      try {
+        const isIOS =
+          /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+          (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1);
+        // @ts-ignore
+        const canRequest = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+
+        if (isIOS && canRequest) {
+          // @ts-ignore
+          const resp = await DeviceOrientationEvent.requestPermission();
+          if (resp !== 'granted') {
+            setError('センサーの利用が拒否されました。設定から「モーションと画面の向きへのアクセス」を有効にしてください。');
+            return;
+          }
+        }
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        setPermissionGranted(true);
+      } catch (err) {
+        console.error('Gyroscope permission error:', err);
+        setError('ジャイロセンサーの初期化に失敗しました。');
+      }
     };
+
+    requestPermission();
+    return () => window.removeEventListener('deviceorientation', handleOrientation, true);
   }, []);
 
-  return { gyroData: data, granted, error, requestPermission: requestGyroPermission };
+  return { gyroData, error, permissionGranted };
 };
