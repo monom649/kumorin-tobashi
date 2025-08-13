@@ -1,0 +1,7 @@
+{
+  "name": "くもりんとばし (Kumorin Tobashi)",
+  "description": "An action runner game where you control the popular character Kumorin, avoiding obstacles and flying as far as possible. Uses the device's gyroscope for controls.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
